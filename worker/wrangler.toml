@@ -1,0 +1,6 @@
+name = "erp-estoque-relay"
+main = "webhook-relay.js"
+compatibility_date = "2024-09-01"
+
+[vars]
+GH_REPO = "gvimperialstudio-ship-it/erp-estoque-espelho"
