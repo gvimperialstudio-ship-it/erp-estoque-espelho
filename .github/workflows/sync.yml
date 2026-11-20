@@ -1,0 +1,112 @@
+name: sync-estoque
+
+on:
+  schedule:
+    # Repo PÚBLICO: minutos grátis ilimitados no GitHub Actions (state.enc segue criptografado com Fernet).
+    # Se mudar o repo para PRIVADO no futuro, altere para "*/30 * * * *" (limite 2.000 min/mês grátis).
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Simular (true) ou aplicar (false)"
+        type: choice
+        options: ["", "true", "false"]
+        default: ""
+  repository_dispatch:
+    types: [estoque-webhook]
+
+# 1 execução por vez; disparos em rajada viram 1 pendente (debounce nativo)
+concurrency:
+  group: sync-estoque
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -q -r requirements.txt
+
+      - name: Baixar estado (branch state)
+        run: |
+          mkdir -p .state
+          if git fetch -q origin state 2>/dev/null; then
+            git archive FETCH_HEAD | tar -x -C .state
+          fi
+
+      - name: Sincronizar
+        env:
+          DRY_RUN: ${{ inputs.dry_run || vars.DRY_RUN || 'true' }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          BLING_CLIENT_ID: ${{ secrets.BLING_CLIENT_ID }}
+          BLING_CLIENT_SECRET: ${{ secrets.BLING_CLIENT_SECRET }}
+          BLING_REFRESH_TOKEN: ${{ secrets.BLING_REFRESH_TOKEN }}
+          MELI_CLIENT_ID: ${{ secrets.MELI_CLIENT_ID }}
+          MELI_CLIENT_SECRET: ${{ secrets.MELI_CLIENT_SECRET }}
+          MELI_CLIENT_ID_CAPITAL: ${{ secrets.MELI_CLIENT_ID_CAPITAL }}
+          MELI_CLIENT_SECRET_CAPITAL: ${{ secrets.MELI_CLIENT_SECRET_CAPITAL }}
+          MELI_CLIENT_ID_VERO: ${{ secrets.MELI_CLIENT_ID_VERO }}
+          MELI_CLIENT_SECRET_VERO: ${{ secrets.MELI_CLIENT_SECRET_VERO }}
+          MELI_CLIENT_ID_ELUXIA: ${{ secrets.MELI_CLIENT_ID_ELUXIA }}
+          MELI_CLIENT_SECRET_ELUXIA: ${{ secrets.MELI_CLIENT_SECRET_ELUXIA }}
+          MELI_REFRESH_TOKEN_CAPITAL: ${{ secrets.MELI_REFRESH_TOKEN_CAPITAL }}
+          MELI_REFRESH_TOKEN_VERO: ${{ secrets.MELI_REFRESH_TOKEN_VERO }}
+          MELI_REFRESH_TOKEN_ELUXIA: ${{ secrets.MELI_REFRESH_TOKEN_ELUXIA }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+        run: python -m erp sync
+
+      - name: Alerta de cancelamento/devolução (issue + e-mail GitHub)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -s .state/cancelamentos_alerta.md ] || exit 0
+          gh label create cancelamento-alerta --color D93F0B 2>/dev/null || true
+          gh issue create --label cancelamento-alerta \
+            --title "ERP estoque: alerta de cancelamento/devolução ($(date -u +%F\ %H:%M))" \
+            --body-file .state/cancelamentos_alerta.md
+
+      - name: Salvar estado (tokens rotacionados + reservas)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -s .state/state.enc ] || { echo "sem estado para salvar"; exit 0; }
+          cd .state
+          git init -q -b state
+          git config user.name "erp-bot"
+          git config user.email "erp-bot@users.noreply.github.com"
+          git add -A
+          git commit -q -m "state $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" state
+
+      - name: Alerta (issue)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh label create erp-alerta --color B60205 2>/dev/null || true
+          N=$(gh issue list --label erp-alerta --state open --json number -q '.[0].number')
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "Nova falha: $RUN"
+          else
+            gh issue create --label erp-alerta --title "ERP estoque: falha na sincronização" \
+              --body "Veja o relatório no resumo da execução: $RUN"
+          fi
