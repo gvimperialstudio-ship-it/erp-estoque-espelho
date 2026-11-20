@@ -1,0 +1,47 @@
+# Configuração NÃO secreta. Segredos ficam no GitHub Secrets.
+
+dry_run: true                # true = só simula. Também controlado pela variável DRY_RUN do repo.
+
+# Estoque publicado = (saldo Bling - reservas - buffer), limitado a max_publicado
+buffer_global: 0             # unidades "escondidas" por segurança em cada anúncio
+max_publicado: 999           # teto exibido no ML
+
+# Estoque baixo: "espelho" = todos mostram o mesmo saldo
+#                "prioridade" = com saldo <= limite, só o canal de menor 'prioridade' vende
+modo_baixo_estoque: prioridade
+limite_baixo_estoque: 1
+
+reserva_horas: 24            # quanto tempo uma venda segura o estoque até o Bling da Rennar baixar
+historico_pedidos_dias: 60   # memória de pedidos (cobre 30 dias do Compra Garantida ML)
+devolucao_auto_estorno: false # false = devolução pós-envio aguarda conferência física na Rennar
+trava_zeragem_pct: 40        # aborta se mais de X% dos anúncios fossem a zero numa rodada
+trava_zeragem_min: 5
+
+bling_saldo: virtual         # virtual (desconta pedidos em aberto) | fisico
+bling_deposito_id: null      # null = soma de todos os depósitos (use `python -m erp bling-depositos`)
+bling_write_mode: none       # none = só leitura (recomendado) | estoque = lança saída no Bling a cada venda
+catalogo_ttl_horas: 12
+
+# Isolamento: anúncios próprios/Donegá sem prefixo "REN-" são ignorados 100% pelo ERP
+sku_prefixo_obrigatorio: "REN-"
+# Prefixos adicionais removidos após o prefixo obrigatório (ex.: "VR-123" -> "123")
+sku_prefixos_remover: []
+sku_map_csv: config/sku_map.csv
+
+# Alertas automáticos (GitHub Issue + e-mail SMTP quando configurado nos Secrets)
+alerta_email_cancelamento: true
+alerta_email_erro: true
+
+canais:
+  - nome: CAPITAL
+    tipo: meli
+    seller_id: 3554514707
+    prioridade: 1
+  - nome: VERO
+    tipo: meli
+    seller_id: 3728045217
+    prioridade: 2
+  - nome: ELUXIA
+    tipo: meli
+    seller_id: 3720968135
+    prioridade: 3
